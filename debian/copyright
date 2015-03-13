@@ -4,6 +4,7 @@ Source: https://fedorahosted.org/releases/c/m/cmake-fedora/
 
 Files: *
 Copyright: Copyright (c) 2010, Ding-Yi Chen, Red Hat, Inc.
+License: BSD-3-clause
 
 Files: debian/*
 Copyright: 2015 ChangZhuo Chen (陳昌倬) <czchen@gmail.com>
