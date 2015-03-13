@@ -1,0 +1,85 @@
+#!/bin/bash
+
+function print_usage(){
+    cat <<END
+Usage: $0 <srpm> [scope1 [scope2 ....]]
+    This command does koji scratch build for given fedora and epel releases.
+
+Parameters:
+    srpm: SRPM file to be scratch-built with koji.
+
+    scopes: releases of what to build. Multiple values are allowed.
+        Valid values:
+            rawhide: Build rawhide.
+
+	    fedora: Build actives fedora releases, including Rawhide.
+
+	    fedora_1: Build the latest supported fedora releases.
+	        This is one release eariler than rawhide.
+
+	    fedora_2: Build the second latest supported fedora releases.
+	        This is two releases eariler than rawhide.
+
+            f22 f21 ...: Build the specified fedora releases.
+
+	    epel: Build the currently supported EPEL releases.
+
+	    epel_1: Build the latest supported EPEL releases.
+
+	    epel_2: Build the second latest supported EPEL releases.
+
+	    epel7 el6 ... : The EPEL releases to be built.
+
+        If scopes is not specified, then rawhide and active 
+	fedora and EPEL releases are built,
+       	as if "rawhide fedora epel" are specified.
+END
+}
+
+# Check for dependency
+for cmd in koji;do
+    if ! which $cmd &>/dev/null;then
+	echo "[Error] $cmd is not found in path" > /dev/stderr
+	exit -2
+    fi
+done
+
+SCRIPT_DIR=$(readlink -f `dirname $0`)
+CMAKE_FEDORA_KOJI_CMD=${SCRIPT_DIR}/cmake-fedora-koji
+if [ ! -x ${CMAKE_FEDORA_KOJI_CMD} ];then
+    echo "[Error] cmake-fedora-koji is not found" > /dev/stderr
+    exit -2
+fi
+
+if [ $# = 0 ]; then
+    print_usage
+    exit 0
+fi
+
+SRPM=$1
+shift
+
+if [[ -z "$SRPM" ]];then
+    print_usage
+    exit -1
+elif [[ ! -r "$SRPM" ]];then
+    echo "Fail to read SRPM file $SRPM" > /dev/stderr
+    exit -2
+fi
+
+TARGETS=`$CMAKE_FEDORA_KOJI_CMD target $@ | xargs`
+echo "TARGETS=$TARGETS"
+FAILED=
+
+for t in $TARGETS;do
+    if ! koji build --scratch $t $SRPM; then
+	FAILED="$FAILED $t"
+    fi
+done
+
+if [ -n "$FAILED" ]; then
+    echo "Failed targets:$FAILED" > /dev/stderr
+    exit 1
+fi
+exit 0
+

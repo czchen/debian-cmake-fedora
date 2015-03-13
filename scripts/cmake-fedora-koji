@@ -1,0 +1,380 @@
+#!/bin/bash
+
+function print_usage(){
+    cat<<END
+NAME 
+    cmake-fedora-koji - cmake-fedora helper script to get koji build information
+
+SYNOPSIS
+    cmake-fedora-koji <ver|branch|git-branch|bodhi-branch> [scope1 [scope2] ....]]
+    cmake-fedora-koji newest-build [package]
+    cmake-fedora-koji newest-changelog [package]
+    cmake-fedora-koji clean
+
+DESCRIPTION
+    Following sub-command are recognized:
+        ver
+            Return version numbers, such as "21 20 7 6"
+
+        branch
+            Return branch names by removing '-candidate' from koji 
+	    targets, such as "f21 f20 epel7 el6"
+
+	koji-buildinfo-suffix
+	    Return the tags for koij buildinfo, such as "fc22 fc21 el7 el6"
+
+	git-branch 
+            Return fedpkg git branch names, such as "master f20 epel7 el6"
+
+        bodhi-branch
+            Return bodhi branch names, 
+	    such as "fc21 fc20 el7 el6", this does not return rawhide.
+
+        target
+            Return koji target names, such as "f21-candidate el7-candidate"
+	
+	newest-build
+	    Return the newest build in n-v-r.t format.
+	    Note that koji latest-build only returns the updates pushed
+	    to stable, newest-build, however, returns the updates in
+	    testing as well.
+
+	newest-changelog
+	    Return the newest changelog of a package in
+	    release, updates, and update-testing
+	    Note that koji latest-build only returns the updates pushed
+	    to stable, newest-build, however, returns the updates in
+	    testing as well.
+
+	clean
+            For cleaning cache.
+
+    scopes: releases of what to build. Multiple values are allowed.
+    	Valid values:
+        rawhide: Build rawhide.
+
+        fedora: Build actives fedora releases, including Rawhide.
+
+        fedora_1: Build the latest supported fedora releases.
+        This is one release eariler than rawhide.
+
+        fedora_2: Build the second latest supported fedora releases.
+        This is two releases eariler than rawhide.
+
+        f22 f21 ...: Build the specified fedora releases.
+
+        epel: Build the currently supported EPEL releases.
+
+        epel_1: Build the latest supported EPEL releases.
+
+        epel_2: Build the second latest supported EPEL releases.
+
+        epel7 el6 ... : The EPEL releases to be built.
+
+        If scopes is not specified, then "fedora epel" is assumed.
+
+END
+}
+
+function get_variable(){
+    cmake -Dcmd=get_variable -Dvar=$1 -Dnoescape_semicolon=1 -P ${CMAKE_FEDORA_SCRIPT_CMAKE}
+}
+
+function manage_cache(){
+    cache_file=$1
+    run=$2
+    cmake -Dcmd=manage_file_cache -Dcache_file=$cache_file \
+    "-Drun=$run" $@ \
+    -P ${CMAKE_FEDORA_SCRIPT_CMAKE}
+}
+
+function get_koji_list_targets(){
+    manage_cache koji-list-targets "koji list-targets --quiet"
+}
+
+function get_koji_history(){
+    pkg=$1
+    LOCAL_KOJI_HISTORY_CACHE_EXPIRY=`get_variable LOCAL_KOJI_HISTORY_CACHE_EXPIRY`
+    manage_cache koji-$pkg-history \
+	"koji list-history --active --event --package $pkg | grep 'tagged into' | grep -v 'trashcan'" \
+	"-Dexpiry_seconds=${LOCAL_KOJI_HISTORY_CACHE_EXPIRY}"
+}
+
+function get_pkg_changelog(){
+    pkg=$1
+    nvr=$2
+    LOCAL_PKG_CHANGELOG_CACHE_EXPIRY=`get_variable LOCAL_PKG_CHANGELOG_CACHE_EXPIRY`
+    _prefix=${LOCAL_CACHE_DIR}/koji-$pkg-changelog
+    manage_cache koji-$pkg-changelog \
+	"koji buildinfo --changelog $nvr | csplit -s -f ${_prefix} - '%^Changelog%1' && cat ${_prefix}00" \
+    "-Dexpiry_seconds=${LOCAL_PKG_CHANGELOG_CACHE_EXPIRY}"
+}
+
+function get_RAWHIDE_BRANCH(){
+    get_koji_list_targets | awk '{if ($1 == "rawhide") print $3}'
+}
+
+function get_fedora_nr_branches(){
+    get_koji_list_targets | awk '{if ($1 ~ "^f[0-9]+-candidate$") print $1}' | grep -v "$RAWHIDE_BRANCH" | sed -e 's/-.*$//' |  sort -r
+}
+
+function get_epel_branches(){
+    get_koji_list_targets | awk '{if ($1 ~ "^e(pe)?l[0-9]+-candidate$") print $1}' | sed -e 's/-.*$//' |  sort -r
+}
+
+# Check for dependency
+for cmd in cmake koji;do
+    if ! which $cmd &>/dev/null;then
+	echo "[Error] $cmd is not found in path" > /dev/stderr
+	exit -2
+    fi
+done
+
+SCRIPT_DIR=$(readlink -f `dirname $0`)
+for d in Modules cmake-fedora/Modules ${SCRIPT_DIR}/../Modules /usr/share/cmake/Modules;do
+    if [ -r $d/CmakeFedoraScript.cmake ];then
+	CMAKE_FEDORA_SCRIPT_CMAKE=$d/CmakeFedoraScript.cmake
+    fi
+done
+if [ -z "${CMAKE_FEDORA_SCRIPT_CMAKE}" ];then
+    echo "[Error] CmakeFedoraScript.cmake is not found" > /dev/stderr
+    exit -2
+fi
+
+if [ $# = 0 ]; then
+    print_usage
+    exit 0
+fi
+
+LOCAL_CACHE_DIR=`cmake -Dcmd=get_variable -Dvar=LOCAL_CACHE_DIR -P ${CMAKE_FEDORA_SCRIPT_CMAKE}`
+
+if [ -z "${LOCAL_CACHE_DIR}" ];then
+    LOCAL_CACHE_DIR=$HOME/.cache/cmake-fedora/
+fi
+[ -d ${LOCAL_CACHE_DIR} ] || mkdir -p ${LOCAL_CACHE_DIR}
+
+subCmd=$1
+shift
+
+if [ "${subCmd}" = "clean" ];then
+    if [ -e "${LOCAL_CACHE_DIR}" ]; then
+	rm -fv ${LOCAL_CACHE_DIR}/koji*
+    fi
+    exit 0
+elif [ "${subCmd}" = "newest-build" ];then
+    pkg=$1
+    if [ -z "${pkg}" ];then
+	 print_usage
+	 echo "Please specify package name." > /dev/stderr
+    fi
+    shift
+    content=`get_koji_history "${pkg}"`
+    if [ "$?" = "0" ] ; then
+	echo "${content}" | tail -n 1 | sed -e "s/ tagged into.*$//" | sed -e "s/^.*(eid [0-9]*) //"
+	exit 0
+    else
+	echo "Cannot found package ${pkg}" > /dev/stderr
+	exit 1
+    fi
+elif [ "${subCmd}" = "newest-changelog" ];then
+    pkg=$1
+    if [ -z "${pkg}" ];then
+	print_usage
+	echo "[Error] Package name is not specified." > /dev/stderr
+	exit -1
+    fi
+    shift
+    nvr=`$0 newest-build ${pkg}`
+
+    if [ "$?" != "0" ] ; then
+	echo "[Error] Cannot found package ${pkg}" > /dev/stderr
+	exit 1
+    fi
+    if [ -z "$nvr" ];then
+	echo "[Error] nvr for ${pkg} is not found. Perhaps network is down." > /dev/stderr
+	exit 2
+    fi
+    content=`get_pkg_changelog ${pkg} ${nvr}`
+    if [ "$?" != "0" ];then
+	echo "Failed to retrieve changelog for ${nvr}" > /dev/stderr
+	exit 3
+    fi
+    echo "${content}" 
+    exit 0
+fi
+
+rawhide=0
+
+# fedora_nr: Fedora w/o rawhide
+fedora_nr=0
+fedora_1=0
+fedora_2=0
+epel=0
+epel_1=0
+epel_2=0
+fedoraList=
+epelList=
+
+if [[ -z "$1" ]];then
+    rawhide=1
+    fedora_nr=1
+    epel=1
+else
+    for scopeCmd in $@;do
+	case $scopeCmd in
+	    'master' )
+		rawhide=1
+		;;
+	    'rawhide' )
+		rawhide=1
+		;;
+	    'fedora' )
+		rawhide=1
+		fedora_nr=1
+		;;
+	    'fedora_1' )
+		fedora_1=1
+		;;
+	    'fedora_2' )
+		fedora_2=1
+		;;
+	    'epel' )
+		epel=1
+		;;
+	    'epel_1' )
+		epel_1=1
+		;;
+	    'epel_2' )
+		epel_2=1
+		;;
+	    'all' )
+		rawhide=1
+		fedora_nr=1
+		epel=1
+		break
+		;;
+	    f[0-9]* )
+		if [[ $fedora -eq 0 ]];then
+		    fedoraList+=($scopeCmd)
+		fi
+		;;
+	    el[0-9]* )
+		if [[ $epel -eq 0 ]];then
+		    epelList+=($scopeCmd)
+		fi
+		;;
+	    epel[0-9]* )
+		if [[ $epel -eq 0 ]];then
+		    scopeCmd="el${scopeCmd#epel}"
+		    epelList+=($scopeCmd)
+		fi
+		;;
+	    * )
+		echo "Invalid scope $scopeCmd" > /dev/stderr
+		exit -1;
+	esac
+    done
+fi
+
+RAWHIDE_BRANCH=`get_RAWHIDE_BRANCH`
+
+FEDORA_NR_BRANCHES_ALL=(`get_fedora_nr_branches `)
+FEDORA_NR_BRANCHES_SCOPE=
+if [[ $fedora_nr -eq 1 ]];then
+    FEDORA_NR_BRANCHES_SCOPE=(${FEDORA_NR_BRANCHES_ALL[@]})
+else
+    if [[ $fedora_1 -eq 1 ]];then
+	FEDORA_NR_BRANCHES_SCOPE=(${FEDORA_NR_BRANCHES_ALL[0]})
+    fi
+    if [[ $fedora_2 -eq 1 ]];then
+	FEDORA_NR_BRANCHES_SCOPE+=(${FEDORA_NR_BRANCHES_ALL[1]})
+    fi
+    for f in "${fedoraList[@]}";do 
+	FEDORA_NR_BRANCHES_SCOPE+=($f)
+    done
+    IFS=$'\n' FEDORA_NR_BRANCHES_SCOPE=($(sort -r -u <<<"${FEDORA_NR_BRANCHES_SCOPE[*]}"))
+fi
+
+EPEL_BRANCHES_ALL=(`get_epel_branches`)
+EPEL_BRANCHES_SCOPE=
+if [[ $epel -eq 1 ]];then
+    EPEL_BRANCHES_SCOPE=(${EPEL_BRANCHES_ALL[@]})
+else
+    if [[ $epel_1 -eq 1 ]];then
+	EPEL_BRANCHES_SCOPE+=(${EPEL_BRANCHES_ALL[0]})
+    fi
+    if [[ $epel_2 -eq 1 ]];then
+	EPEL_BRANCHES_SCOPE+=(${EPEL_BRANCHES_ALL[1]})
+    fi
+    for f in "${epelList[@]}";do 
+	EPEL_BRANCHES_SCOPE+=($f)
+    done
+    IFS=$'\n' EPEL_BRANCHES_SCOPE=($(sort -r -u <<<"${EPEL_BRANCHES_SCOPE[*]}"))
+fi
+
+case $subCmd in
+    ver )
+	if [[ $rawhide -eq 1 ]];then
+	    sed -e 's/^f//' <<< $RAWHIDE_BRANCH
+	fi
+
+	for b in "${FEDORA_NR_BRANCHES_SCOPE[@]}" "${EPEL_BRANCHES_SCOPE[@]}";do
+	    sed -e 's/^f//' <<<$b | sed -e 's/^el//' | sed -e 's/^epel//'
+	done
+	;;
+
+    branch | git-branch )
+	if [[ $rawhide -eq 1 ]];then
+	    if [[ $subCmd = "git-branch" ]];then
+		echo "master"
+	    elif [[ $subCmd = "branch" ]];then
+		echo "$RAWHIDE_BRANCH"
+	    fi
+	fi
+
+	for b in "${FEDORA_NR_BRANCHES_SCOPE[@]}" "${EPEL_BRANCHES_SCOPE[@]}";do
+	    if [[ ${b#el} -gt 6 ]];then
+		echo "epel${b#el}"
+	    else
+		echo $b
+	    fi
+	done
+	;;
+
+    koji-buildinfo-suffix )
+	if [[ $rawhide -eq 1 ]];then
+	    sed -e 's/f/fc/' <<<$RAWHIDE_BRANCH
+	fi
+	for b in "${FEDORA_NR_BRANCHES_SCOPE[@]}" "${EPEL_BRANCHES_SCOPE[@]}";do
+	    sed -e 's/f/fc/' <<<$b | sed -e 's/epel/el/'
+	done
+	;;
+
+    bodhi-branch )
+	IFS=$'\;' BODHI_BRANCHES_KNOWN=(`get_variable BODHI_BRANCHES` )
+	for b in "${FEDORA_NR_BRANCHES_SCOPE[@]}" "${EPEL_BRANCHES_SCOPE[@]}";do
+	    b=`sed -e 's/f/fc/' <<<$b`
+	    for m in ${BODHI_BRANCHES_KNOWN[*]};do
+		[ "$b" = "$m" ] && echo "$b" && break
+	    done
+	done
+	;;
+    target )
+	if [[ $rawhide -eq 1 ]];then
+	    echo "$RAWHIDE_BRANCH-candidate"
+	fi
+	for b in "${FEDORA_NR_BRANCHES_SCOPE[@]}" "${EPEL_BRANCHES_SCOPE[@]}";do
+	    echo "$b-candidate"
+	done
+	;;
+
+    *)
+	print_usage
+	echo "Invalid subcommand '$subCmd'" > /dev/stderr
+	rm -f $FEDORA_TMP_FILE $EPEL_TMP_FILE
+	exit -1
+	;;
+esac
+rm -f $FEDORA_TMP_FILE $EPEL_TMP_FILE
+exit 0
+
