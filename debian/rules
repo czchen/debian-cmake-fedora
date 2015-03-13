@@ -8,11 +8,12 @@ include /usr/share/dpkg/default.mk
 	dh $@ 
 
 override_dh_auto_test:
-	# testing is broken now
+	# FIXME: testing is broken for now.
 
 override_dh_install:
 	dh_install
 	rm -r $(CURDIR)/debian/cmake-fedora/usr/bin
+	rm $(CURDIR)/debian/cmake-fedora/usr/share/doc/cmake-fedora/COPYING
 
 override_dh_installchangelogs:
 	dh_installchangelogs --keep
