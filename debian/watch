@@ -1,0 +1,2 @@
+version=3
+https://fedorahosted.org/releases/c/m/cmake-fedora/ cmake-fedora-([\d\.]+)-Source.tar.gz
