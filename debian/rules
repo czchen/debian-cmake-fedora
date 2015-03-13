@@ -8,6 +8,7 @@ include /usr/share/dpkg/default.mk
 	dh $@ 
 
 override_dh_auto_test:
+	# testing is broken now
 
 override_dh_install:
 	dh_install

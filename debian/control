@@ -1,16 +1,33 @@
 Source: cmake-fedora
-Section: unknown
+Section: devel
 Priority: optional
 Maintainer: ChangZhuo Chen (陳昌倬) <czchen@gmail.com>
 Build-Depends: debhelper (>= 9),
                cmake,
 Standards-Version: 3.9.6
-Homepage: <insert the upstream URL, if relevant>
-#Vcs-Git: git://anonscm.debian.org/collab-maint/cmake-fedora.git
-#Vcs-Browser: http://anonscm.debian.org/?p=collab-maint/cmake-fedora.git;a=summary
+Homepage: https://fedorahosted.org/cmake-fedora/
+Vcs-Git: git://anonscm.debian.org/collab-maint/cmake-fedora.git
+Vcs-Browser: http://anonscm.debian.org/cgit/collab-maint/cmake-fedora.git
 
 Package: cmake-fedora
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: <insert up to 60 chars description>
- <insert long description, indented with spaces>
+Architecture: all
+Depends: ${misc:Depends}
+Description: Set of scripts and cmake modules that simply the release process
+ cmake-fedora is designed to relieve your from chores of releasing software by:
+ .
+   - Keeping the consistency of release information such as version and update
+     - messages in:
+     - Release notes
+     - ChangeLog
+     - Tags
+     - Spec file
+     - Fedpkg commit message
+     - Bodhi notes
+   - Source archive depends on the files to be packed.
+   - Run rpmlint and koji scratch build before tag as sanity checks.
+   - Easy upload to scp, sftp hosting services sites.
+   - Translation targets like gettext and Zanata.
+   - Provide license information and templates of CMakeLists.txt, spec files for
+    new packages.
+ .
+ while avoid some pitfalls like all junk files are packed.
